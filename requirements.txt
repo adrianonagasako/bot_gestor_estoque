@@ -3,3 +3,4 @@ pyasn1==0.4.8
 python-decouple==3.5
 rsa==4.7.2
 Telethon==1.23.0
+psycopg2
