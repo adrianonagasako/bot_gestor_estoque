@@ -328,18 +328,14 @@ async def menu_admin(event):                                                    
                     async def new_img():                                                #função que permite adição de novas fotos
                         send_img = ['img', 'escolha um arquivo por mensagem\n \nOu clique em /PARAR para não enviar mais fotos', idproduct]
                         callback = await chat_bot(event.sender_id, send_img)
-                        if callback == '/PARAR':
-                            for itens in add_img:
-                                query = f"INSERT INTO prod_img (idproducts, img_name) VALUES ({idproduct}, '{itens}')"
-                                con.manipulate(query)
-                                await show_prod(idproduct)
-                        elif not callback:
+                        if not callback:
                             await bot.send_message(event.sender_id, 'Você estava cadastrando mais imagens do produto e a sessão expirou')
-                        else:
-                            add_img.append(callback)
+                        elif callback != '/PARAR':
+                            query = f"INSERT INTO prod_img (idproducts, img_name) VALUES ({idproduct}, '{callback}')"
+                            con.manipulate(query)
                             await new_img()
-                            
-                    add_img = []
+                        else:
+                            await show_photos()
                     query = f"SELECT img_name FROM prod_img WHERE idproducts = {idproduct}"
                     images = con.consult(query)
                     i = 0
@@ -358,7 +354,10 @@ async def menu_admin(event):                                                    
                             query = f"DELETE FROM prod_img WHERE img_name = '{img[0]}' AND idproducts = {idproduct}"
                             con.manipulate(query)
                             await bot.delete_messages(event.sender_id, display)
-                            await show_prod(idproduct)
+                            if i < len(images):
+                                pass
+                            else:
+                                await show_prod(idproduct)
                         elif callback == b'VOLTAR':
                             await show_prod(idproduct)
                         elif callback == b'NOVO':
