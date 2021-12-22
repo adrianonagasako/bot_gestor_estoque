@@ -1,6 +1,6 @@
+import asyncio
 import os
 import time
-import asyncio
 from decouple import config
 from telethon import TelegramClient, events, Button
 from telethon.tl import types
@@ -120,6 +120,8 @@ async def chat_bot(user_id, quest):                                             
                 response = await conv.wait_event(respond_event(user_id), timeout=120)
                 answer = response.message.text
             elif quest[0] == 'img':
+                if isinstance(quest[2],int):
+                    quest[2] = str(quest[2])
                 await conv.send_message(quest[1])
                 response = await conv.wait_event(respond_event(user_id), timeout=120)
                 try:
@@ -296,6 +298,135 @@ async def menu_admin(event):                                                    
             pass
                 
     async def manage_products():                                                        #função de gerenciamento de produtos
+        async def list_product(product):                                                #função de listagem de produtos
+            async def show_prod(idproduct):                                             #função que mostra o nome, descrição, valor e quantidade e permite editar os valores
+                async def edit_prod(id, field):
+                    callback = await chat_bot(event.sender_id, ('message', 'Digite o novo valor para a referência:'))
+                    if not callback:
+                        await bot.send_message(event.sender_id, f'Você iria alterar o campo {field} do produto {sel_prod[0][1]}?')
+                    else:
+                        if field == 'price':
+                            query = f"UPDATE products SET {field} = {to_float(callback)} WHERE idproducts = {id}"
+                        elif field != 'units':
+                            query = f"UPDATE products SET {field} = '{callback}' WHERE idproducts = {id}"
+                        else:
+                            query = f"UPDATE products SET {field} = {callback} WHERE idproducts = {id}"
+                    con.manipulate(query)
+                async def show_details():                                               #função que mostra os detalhes do produto e permite edição
+                    temp_msg = f'/EDITAR_DETALHES: {sel_prod[0][3]}\n \n/VOLTAR para retornar para o produto.\n \n/SAIR para encerrar a sessão.'
+                    callback = await chat_bot(event.sender_id, ('message', temp_msg))
+                    if not callback:
+                        await bot.send_message(event.sender_id, f'Você não editou o produto {sel_prod[0][1]}')
+                    elif callback == '/EDITAR_DETALHES':
+                        await edit_prod(idproduct, 'details')
+                        await show_prod(idproduct)
+                    elif callback == 'VOLTAR':
+                        await show_prod(idproduct)
+                    elif callback == b'SAIR':
+                        pass
+                async def show_photos():                                                #função que mosra as fotos e permite adicionar ou apagar fotos
+                    async def new_img():                                                #função que permite adição de novas fotos
+                        send_img = ['img', 'escolha um arquivo por mensagem\n \nOu clique em /PARAR para não enviar mais fotos', idproduct]
+                        callback = await chat_bot(event.sender_id, send_img)
+                        if callback == '/PARAR':
+                            for itens in add_img:
+                                query = f"INSERT INTO prod_img (idproducts, img_name) VALUES ({idproduct}, '{itens}')"
+                                con.manipulate(query)
+                                await show_prod(idproduct)
+                        elif not callback:
+                            await bot.send_message(event.sender_id, 'Você estava cadastrando mais imagens do produto e a sessão expirou')
+                        else:
+                            add_img.append(callback)
+                            await new_img()
+                            
+                    add_img = []
+                    query = f"SELECT img_name FROM prod_img WHERE idproducts = {idproduct}"
+                    images = con.consult(query)
+                    i = 0
+                    for img in images:
+                        i += 1
+                        buttons = ['APAGAR', 'NOVO', 'VOLTAR']
+                        if i < len(images):
+                            buttons.append('PROXIMO')
+                        file_name = img[0].rsplit('\\')
+                        display = await bot.send_message(event.sender_id, sel_prod[0][1], file = img[0])
+                        callback = await chat_bot(event.sender_id, ('button', file_name[-1], buttons))
+                        if not callback:
+                            await bot.send_message(event.sender_id, f'Você não editou a foto do produto {sel_prod[0][1]}')
+                        elif callback == b'APAGAR':
+                            os.remove(img[0])
+                            query = f"DELETE FROM prod_img WHERE img_name = '{img[0]}' AND idproducts = {idproduct}"
+                            con.manipulate(query)
+                            await bot.delete_messages(event.sender_id, display)
+                            await show_prod(idproduct)
+                        elif callback == b'VOLTAR':
+                            await show_prod(idproduct)
+                        elif callback == b'NOVO':
+                            await new_img()
+                        elif callback == b'PROXIMO':
+                            pass
+                query = f"SELECT * FROM products WHERE idproducts = {idproduct}"
+                sel_prod = con.consult(query)
+                temp_msg = f'/EDITAR_NOME: {sel_prod[0][1]}\n/EDITAR_VALOR: {to_real(sel_prod[0][4])}\n/EDITAR_UNIDADES: {sel_prod[0][5]}\n \n/EDITAR_DESCRICAO: {sel_prod[0][2]}\n \n/VER_DETALHES: Visualizar e editar detalhes\n \n/VER_FOTOS para visualizar e editar as fotos do produto.\n \n/VOLTAR para retornar a lista de produtos.\n \n/SAIR para encerrar a sessão.'
+                callback = await chat_bot(event.sender_id, ('message', temp_msg))
+                if not callback:
+                    await bot.send_message(event.sender_id, 'Você não editou o produto {sel_prod[0][1]}')
+                elif callback == '/EDITAR_NOME':
+                    await edit_prod(sel_prod[0][0], 'name')
+                    await show_prod(idproduct)
+                elif callback == '/EDITAR_VALOR':
+                    await edit_prod(sel_prod[0][0], 'price')
+                    await show_prod(idproduct)
+                elif callback == '/EDITAR_UNIDADES':
+                    await edit_prod(sel_prod[0][0], 'units')
+                    await show_prod(idproduct)
+                elif callback == '/EDITAR_DESCRICAO':
+                    await edit_prod(sel_prod[0][0], 'description')
+                    await show_prod(idproduct)
+                elif callback == '/VER_DETALHES':
+                    await show_details()
+                elif callback == '/VER_FOTOS':
+                    await show_photos()
+                elif callback == '/VOLTAR':
+                    await list_product(product)
+                elif callback == '/SAIR':
+                    pass
+                
+            if type(product) != list:
+                query = f"SELECT * FROM products WHERE LOWER(name) LIKE LOWER('%{product}%') ORDER BY name ASC"
+                product = con.consult(query)
+            if product == []:
+                callback = await chat_bot(event.sender_id, ('message','O nome que você digitou não consta nos nossos registros, digite outro nome, ou clique em /CADASTRAR para novo produto\n \n/VOLTAR ao menu principal\n/SAIR para encerrar a sessão'))
+                if not callback:
+                    await bot.send_message(event.sender_id, 'O nome que você estava procurando não foi encontrado')
+                elif callback == '/CADASTRAR':
+                    await product_reg()
+                elif callback == 'VOLTAR':
+                    await menu_admin(event)
+                elif callback == b'SAIR':
+                    pass
+                else:
+                    await list_product(callback)
+            else:
+                i = 0
+                temp_msg =''
+                for prod in product:
+                    abbv_name = prod[1].rsplit(',')
+                    i += 1
+                    temp_msg += f'/PROD_{i} {abbv_name[0]}\n'
+                callback = await chat_bot(event.sender_id, ('message', f'{temp_msg}\n \nClique em /VOLTAR para ir para o menu inicial.\nClique em /SAIR para finalizar a sessão.\nOu digite uma nova palavra para ser pesquisada.'))
+                if not callback:
+                    await bot.send_message(event.sender_id, 'Você não selecionou nenhum produto')
+                elif callback[0:5] == '/PROD':
+                    index = int(callback.strip("/PROD_"))-1
+                    await show_prod(product[index][0])
+                elif callback == '/VOLTAR':
+                    await menu_admin(event)
+                elif callback == '/SAIR':
+                    pass
+                else:
+                    await list_product(callback)
+            
         async def product_reg():                                                        #função de criação de cadastro de novos produtos
             async def get_img():                                                        #função de adicionar foto do produto
                 async def get_more_img():                                               #função para adicionar fotos complementares
@@ -305,8 +436,7 @@ async def menu_admin(event):                                                    
                         for itens in add_img:
                             imgs.append(itens)
                     elif not callback:
-                        cancel_op()
-                        return
+                        await bot.send_message(event.sender_id, 'Você estava cadastrando mais imagens do produto e a sessão expirou')
                     else:
                         add_img.append(callback)
                         await get_more_img()
@@ -314,8 +444,7 @@ async def menu_admin(event):                                                    
                 reg_img = ['img', 'Envie uma foto do produto, (envie como arquivo)', new_product_id]       
                 callback = await chat_bot(event.sender_id, reg_img)
                 if not callback:
-                    cancel_op()
-                    return
+                    await bot.send_message(event.sender_id, 'Você estava enviando imagem do produto e a sessão expirou')
                 else:
                     imgs.append(callback)
                 add_img = []
@@ -331,8 +460,7 @@ async def menu_admin(event):                                                    
             for quest in register:
                 callback = await chat_bot(event.sender_id, quest)
                 if not callback:
-                    cancel_op()
-                    return   
+                    await bot.send_message(event.sender_id, 'Você não terminou de cadastrar um produto') 
                 else:
                     product.append(callback)
             imgs = []       
@@ -352,14 +480,23 @@ async def menu_admin(event):                                                    
             await bot.send_message(chat_id, 'Descrição:\n'+descript+'\nPara saber mais, dê um oi, encontre o produto e clique em detalhes')
             callback = await chat_bot(event.sender_id, ('button', 'Clique no botão correspondente a sua ação', ('CADASTRAR OUTRO', 'VOLTAR AO MENU')))
             if not callback:
-                cancel_op
-                return
+                await bot.send_message(event.sender_id, 'Você cadastrou novo produto e abandonou a sessão')
             elif callback == b'VOLTAR AO MENU':
                 await menu_admin(event)
             elif callback == b'CADASTRAR OUTRO':
                 await product_reg()
-            
-        await product_reg()
+                
+        callback = await chat_bot(event.sender_id, ('message','Digite o nome ou parte para listar uma relação\n \nOu clique em /CADASTRAR para novo produto\n \n/VOLTAR ao menu principal\n/SAIR para encerrar a sessão'))
+        if not callback:
+            await bot.send_message(event.sender_id, 'Você estava no menu principal de produtos')
+        elif callback == '/CADASTRAR':
+            await product_reg()
+        elif callback == 'VOLTAR':
+            await menu_admin(event)
+        elif callback == b'SAIR':
+            pass
+        else:
+            await list_product(callback)
     
     async def list_request(request):                                                    #função de listagem de pedidos
         if request is None:
@@ -502,6 +639,7 @@ async def menu_admin(event):                                                    
         await manage_products()
     await bot.send_message(event.sender_id, 'Sessão Finalizada')
     cancel_op()
+    return
     
 #===================================================== funções de Cadastro de usuário ==========================================================================
 async def register_user(event):                                                         #função de cadastro de usuários
@@ -688,9 +826,7 @@ async def user_menu(event):                                                     
             else:
                 listed = int(callback.strip("/PRODUTO_"))-1
                 await view_product(result[listed][0])
-    
-        
-
+                
     wellcome = ('message', 'Você pode digitar o que está procurando ou\nClicar em /LISTA para ver uma lista de nossos produtos ou\nClicar em /VER_PEDIDO para ver o pedido caso tenha ítens comprados')
     callback = await chat_bot(event.sender_id, wellcome)
     if not callback:
@@ -713,7 +849,7 @@ async def user_menu(event):                                                     
             await bot.send_message(event.sender_id, 'Lista de pedidos vazia')
             await user_menu(event)
     else:
-        query = f"SELECT name FROM products WHERE name LIKE '%{callback}%' AND units > 0 ORDER BY name ASC"
+        query = f"SELECT name FROM products WHERE LOWER(name) LIKE LOWER('%{callback}%') AND units > 0 ORDER BY name ASC"
         result = con.consult(query)
         if not result:
             await bot.send_message(event.sender_id, f'Não encontrei produtos com "{callback}" no nome')
