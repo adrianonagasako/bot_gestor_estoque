@@ -13,13 +13,7 @@ bot = TelegramClient('bot', api_id, api_hash).start(bot_token)
 con = DB()
 chat_id = -739573656
 download_path = '\workspaces\\bot_gestor_estoque\\media\\'
-phone_user = None
-request = [] 
-
-def cancel_op():
-    global phone_user
-    phone_user = None
-    
+ 
 def to_float(value):
     return float(value.strip("R$").replace('.','').replace(',','.'))
 
@@ -30,11 +24,10 @@ def to_real(value):
 def to_date(value):
     x = str(value)
     return f'{x[4:6]}/{x[2:4]}/20{x[0:2]} as {x[6:8]}:{x[8:10]}'
-#========================================================= captador de novas mensagens ========================================================================
 
-@bot.on(events.NewMessage)
+#========================================================= captador de novas mensagens ========================================================================
+@bot.on(events.NewMessage())
 async def handler(event):                                                               #função que inicia a interação do bot
-    
     async def get_phone(sender_id):                                                     #função que pede o número de celular caso o bot não receber do telegram
         cel = ('message', 'Por favor digite seu número celular telegram (Com DDD e somente números)')
         phone = await chat_bot(sender_id, cel)
@@ -49,7 +42,7 @@ async def handler(event):                                                       
                 confirm_cel = ('button', f'O número {phone} está correto?', ('SIM', 'EDITAR'))
                 callback = await chat_bot(sender_id, confirm_cel)
                 if not callback:
-                    return
+                    await bot.send_message(event.sender_id, 'Você estava digitando seu número telegram')
                 elif callback == b'SIM':
                     phone = [phone]
                 elif callback == b'EDITAR':
@@ -57,44 +50,33 @@ async def handler(event):                                                       
                     phone = await chat_bot(sender_id, cel)
         return phone[0]
     
-    global phone_user
     sender = await event.get_sender()
     if event.raw_text == 'oi' or event.raw_text == 'Oi':
-        if not phone_user:                                                              #começa a validação e se já tiver validado, segue para próxima fase
-            if event.chat_id == chat_id:                                                #Valida o grupo de vendas
+        if event.chat_id == chat_id:                                                    #Valida o grupo de vendas
+            if event.chat.admin_rights.ban_users == True:                               #valida se o usuário é administrador
+                await menu_admin(event)
+            else:
                 query = f"SELECT aproved, phone, name_rs FROM usuario WHERE iduser = {sender.id}"
-                result = con.consult(query)
-                if event.chat.admin_rights.ban_users == True:                           #valida se o usuário é administrador
-                    phone_user = 'admin'
-                    await menu_admin(event)
-                else:            
-                    try:                                                                #tenta fazer uma consulta, caso for excessão, ele irá para o menu de registro
-                        if result[0][0] == None:                                        #verifica se o usuário já foi registrado ou aguardando aprovação
-                            await event.reply('Acabei de verificar que seu cadastro está em aprovação, em breve receberá confirmação de sua aprovação, obrigado e até breve!')
-                        elif result[0][0] == True:
-                            phone_user = result[0][1]
-                            await bot.send_message(event.sender_id, f'Seja bem vindo, {result[0][2]}')
-                            await user_menu(event)                                      #inicia o menu de compras do usuário
-                    except IndexError:
-                        if not sender.phone:
-                            phone = await get_phone(sender.id)
-                            if not phone:
-                                return
-                            else:
-                                phone_user = phone
-                        else:
-                            phone_user = sender.phone
-                        await register_user(event)                                      #chama a função de registro de usuário                     
+                result = con.consult(query)                      
+                try:                                                                    #tenta fazer uma consulta, caso for excessão, ele irá para o menu de registro
+                    if result[0][0] == None:                                            #verifica se o usuário já foi registrado ou aguardando aprovação
+                        await event.reply('Acabei de verificar que seu cadastro está em aprovação, em breve receberá confirmação de sua aprovação, obrigado e até breve!')
+                    elif result[0][0] == True:
+                        await bot.send_message(event.sender_id, f'Seja bem vindo, {result[0][2]}')
+                        await user_menu(event)                                          #inicia o menu de compras do usuário
+                except IndexError:
+                    phone = await get_phone(sender.id)
+                    await unregistered_user(event, phone)                               #chama a função de registro de usuário
     elif event.raw_text == '/pedidos':
         if event.chat_id == chat_id:                                                    #Valida o grupo de vendas
             query = f"SELECT aproved, phone, name_rs FROM usuario WHERE iduser = {sender.id}"
             result = con.consult(query)
             try:
-                phone_user = result[0][1]
                 await bot.send_message(event.sender_id, f'Seja bem vindo, {result[0][2]}')
                 await view_requests(event)
             except IndexError:
                 pass
+
 #================================================== funções que criam conversas interativas ===================================================================   
 
 def press_event(user_id):
@@ -179,6 +161,11 @@ async def menu_admin(event):                                                    
             j = int(callback.strip("/BAIXAR_"))-1
             await bot.send_message(event.sender_id, 'Baixando arquivo, se for imagem, ele irá abrir como foto', file = img[j])
             await view_request(idrequest)
+        elif callback == '/CONTINUAR':
+            pass
+        else:
+            await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+            await view_request(idrequest)
             
     async def change_status(idrequest):                                                 #função de alteração de status de pedido
         async def set_new_status(new_status):                                           #função que define o status escolhido
@@ -215,23 +202,32 @@ async def menu_admin(event):                                                    
         callback = await chat_bot(event.sender_id, ('message', choose))
         if not callback:
             await bot.send_message(event.sender_id, f'O status do pedido nº {idrequest} ficou pendente de sua escolha')
-        if callback == '/STATUS_1':
+        elif callback == '/STATUS_1':
             await set_new_status("Aguardando endereço e forma de pagamento")
-        if callback == '/STATUS_2':
+        elif callback == '/STATUS_2':
             await set_new_status("Aguardando pagamento")
-        if callback == '/STATUS_3':
+        elif callback == '/STATUS_3':
             await set_new_status("Produto enviado")
-        if callback == '/STATUS_4':
+        elif callback == '/STATUS_4':
             await set_new_status("Entregue")
-        if callback == '/STATUS_5':
+        elif callback == '/STATUS_5':
             await set_new_status("Cancelado")
-        if callback == '/STATUS_6':
+        elif callback == '/STATUS_6':
             await set_new_status("Desistência ou defeito")
+        else:
+            await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+            await change_status(idrequest)
+            return
         await list_request(idrequest)
     
     async def new_message(idrequest):                                                   #função de visualização de mensagens e respostas
         async def rec_message(new_message):
             new_mess_id = time.strftime("%y%m%d%H%M%S", time.localtime())
+            query = f"SELECT id FROM chat WHERE idrequest = {idrequest} AND answered = FALSE"
+            chat_no_answ = con.consult(query)
+            for chat_id in chat_no_answ:
+                check_answered = f"UPDATE chat SET answered = TRUE WHERE id = {chat_id[0]}"
+                con.manipulate(check_answered)
             insert_message = f"INSERT INTO chat (id, idrequest, who_sent, message) VALUES ({new_mess_id}, {idrequest}, 'vendedor', '{new_message}')"
             con.manipulate(insert_message)
             query = f"SELECT iduser FROM request WHERE id = {idrequest}"
@@ -291,11 +287,11 @@ async def menu_admin(event):                                                    
                 elif callback == b'VOLTAR':
                     await menu_admin(event)
                 elif callback == b'SAIR':
-                        pass
+                    await bot.send_message(event.sender_id, 'Sessão Finalizada')
         elif callback == b'VOLTAR':
             await menu_admin(event)
         elif callback == b'SAIR':
-            pass
+            await bot.send_message(event.sender_id, 'Sessão Finalizada')
                 
     async def manage_products():                                                        #função de gerenciamento de produtos
         async def list_product(product):                                                #função de listagem de produtos
@@ -312,6 +308,7 @@ async def menu_admin(event):                                                    
                         else:
                             query = f"UPDATE products SET {field} = {callback} WHERE idproducts = {id}"
                     con.manipulate(query)
+                    
                 async def show_details():                                               #função que mostra os detalhes do produto e permite edição
                     temp_msg = f'/EDITAR_DETALHES: {sel_prod[0][3]}\n \n/VOLTAR para retornar para o produto.\n \n/SAIR para encerrar a sessão.'
                     callback = await chat_bot(event.sender_id, ('message', temp_msg))
@@ -320,11 +317,15 @@ async def menu_admin(event):                                                    
                     elif callback == '/EDITAR_DETALHES':
                         await edit_prod(idproduct, 'details')
                         await show_prod(idproduct)
-                    elif callback == 'VOLTAR':
+                    elif callback == '/VOLTAR':
                         await show_prod(idproduct)
-                    elif callback == b'SAIR':
-                        pass
-                async def show_photos():                                                #função que mosra as fotos e permite adicionar ou apagar fotos
+                    elif callback == '/SAIR':
+                        await bot.send_message(event.sender_id, 'Sessão Finalizada')
+                    else:
+                        await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+                        await show_details()
+                        
+                async def show_photos():                                                #função que mostra as fotos e permite adicionar ou apagar fotos
                     async def new_img():                                                #função que permite adição de novas fotos
                         send_img = ['img', 'escolha um arquivo por mensagem\n \nOu clique em /PARAR para não enviar mais fotos', idproduct]
                         callback = await chat_bot(event.sender_id, send_img)
@@ -389,8 +390,10 @@ async def menu_admin(event):                                                    
                 elif callback == '/VOLTAR':
                     await list_product(product)
                 elif callback == '/SAIR':
-                    pass
-                
+                    await bot.send_message(event.sender_id, 'Sessão Finalizada')
+                else:
+                    await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+                    await show_photos()
             if type(product) != list:
                 query = f"SELECT * FROM products WHERE LOWER(name) LIKE LOWER('%{product}%') ORDER BY name ASC"
                 product = con.consult(query)
@@ -400,10 +403,10 @@ async def menu_admin(event):                                                    
                     await bot.send_message(event.sender_id, 'O nome que você estava procurando não foi encontrado')
                 elif callback == '/CADASTRAR':
                     await product_reg()
-                elif callback == 'VOLTAR':
+                elif callback == '/VOLTAR':
                     await menu_admin(event)
-                elif callback == b'SAIR':
-                    pass
+                elif callback == '/SAIR':
+                    await bot.send_message(event.sender_id, 'Sessão Finalizada')
                 else:
                     await list_product(callback)
             else:
@@ -422,7 +425,7 @@ async def menu_admin(event):                                                    
                 elif callback == '/VOLTAR':
                     await menu_admin(event)
                 elif callback == '/SAIR':
-                    pass
+                    await bot.send_message(event.sender_id, 'Sessão Finalizada')
                 else:
                     await list_product(callback)
             
@@ -431,13 +434,16 @@ async def menu_admin(event):                                                    
                 async def get_more_img():                                               #função para adicionar fotos complementares
                     reg_img = ['img', 'Envie outra foto, ou clique em /PARAR se terminou', new_product_id]
                     callback = await chat_bot(event.sender_id, reg_img)
-                    if callback == '/PARAR':
+                    if not callback:
+                        await bot.send_message(event.sender_id, 'Você estava cadastrando mais imagens do produto e a sessão expirou')
+                    elif callback == '/PARAR':
                         for itens in add_img:
                             imgs.append(itens)
-                    elif not callback:
-                        await bot.send_message(event.sender_id, 'Você estava cadastrando mais imagens do produto e a sessão expirou')
                     else:
-                        add_img.append(callback)
+                        if callback[0:11] == '\workspaces':
+                            add_img.append(callback)
+                        else:
+                            await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
                         await get_more_img()
                         
                 reg_img = ['img', 'Envie uma foto do produto, (envie como arquivo)', new_product_id]       
@@ -445,7 +451,11 @@ async def menu_admin(event):                                                    
                 if not callback:
                     await bot.send_message(event.sender_id, 'Você estava enviando imagem do produto e a sessão expirou')
                 else:
-                    imgs.append(callback)
+                    if callback[0:11] == '\workspaces':
+                        imgs.append(callback)
+                    else:
+                        await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+                        await get_img()
                 add_img = []
                 await get_more_img()
             
@@ -490,10 +500,10 @@ async def menu_admin(event):                                                    
             await bot.send_message(event.sender_id, 'Você estava no menu principal de produtos')
         elif callback == '/CADASTRAR':
             await product_reg()
-        elif callback == 'VOLTAR':
+        elif callback == '/VOLTAR':
             await menu_admin(event)
-        elif callback == b'SAIR':
-            pass
+        elif callback == '/SAIR':
+            await bot.send_message(event.sender_id, 'Sessão Finalizada')
         else:
             await list_product(callback)
     
@@ -510,7 +520,6 @@ async def menu_admin(event):                                                    
             elif callback[0:7] == '/PEDIDO':
                 request = int(callback.strip("/PEDIDO_"))
         await view_request(request)
-        #await new_message(request)
         callback = await chat_bot(event.sender_id, ('button', 'Escolha entre alterar o status do pedido, ver mensagens, voltar a lista de pedidos, voltar ao menu inicial ou encerrar a sessão\n \nVocê pode digitar o Nº do Pedido mesmo entregue ou fechado', ('ALT STATUS', 'MENSAGENS', 'LISTA', 'VOLTAR', 'SAIR')))
         if not callback:
             await bot.send_message(event.sender_id, f'Você estava acompanhando o pedido {request}')
@@ -525,17 +534,15 @@ async def menu_admin(event):                                                    
         elif callback == b'VOLTAR':
             await menu_admin(event)
         elif callback == b'SAIR':
-            pass
+            await bot.send_message(event.sender_id, 'Sessão Finalizada')
         else:
             await list_request(callback)
     
     async def no_answered_messages(no_ans_mess, index):                                 #função que enfilera as mensagens pendentes de respostas
         if index < len(no_ans_mess) :
             no_msg = no_ans_mess[index]
-            await view_request(no_msg[index])
-            await new_message(no_msg[index])
-            check_answered = f"UPDATE chat SET answered = TRUE WHERE id = {no_msg[0]}"
-            con.manipulate(check_answered)
+            await view_request(no_msg[1])
+            await new_message(no_msg[1])
             callback = await chat_bot(event.sender_id, ('button', 'Clique em PROXIMO para a próxima mensagem pendente, VOLTAR para ir para o menu inicial ou SAIR para encerrar a Sessão', ('PROXIMO', 'VOLTAR', 'SAIR')))
             if not callback:
                 await bot.send_message(event.sender_id, 'Ainda há compradores esperando respostas')
@@ -544,7 +551,7 @@ async def menu_admin(event):                                                    
             elif callback == b'VOLTAR':
                 await menu_admin(event)
             elif callback == b'SAIR':
-                pass
+                await bot.send_message(event.sender_id, 'Sessão Finalizada')
         else:
             callback = await chat_bot(event.sender_id, ('button', 'Não há mais mensagens pendentes\n \nClique em VOLTAR para ir para o menu inicial ou SAIR para encerrar a Sessão', ('VOLTAR', 'SAIR')))
             if not callback:
@@ -552,7 +559,7 @@ async def menu_admin(event):                                                    
             elif callback == b'VOLTAR':
                 await menu_admin(event)
             elif callback == b'SAIR':
-                pass
+                await bot.send_message(event.sender_id, 'Sessão Finalizada')
             
     async def requests_expired(req_no_chat, index):                                     #função que enfilera os pedidos que não tiveram resposta a mais de 2 dias
         if index <= len(req_no_chat) :
@@ -567,7 +574,7 @@ async def menu_admin(event):                                                    
             elif callback == b'VOLTAR':
                 await menu_admin(event)
             elif callback == b'SAIR':
-                pass
+                await bot.send_message(event.sender_id, 'Sessão Finalizada')
         else:
             callback = await chat_bot(event.sender_id, ('button', 'Não há mais mensagens pendentes.\n \nClique em VOLTAR para ir para o menu inicial ou SAIR para encerrar a Sessão', ('VOLTAR', 'SAIR')))
             if not callback:
@@ -575,7 +582,7 @@ async def menu_admin(event):                                                    
             elif callback == b'VOLTAR':
                 await menu_admin(event)
             elif callback == b'SAIR':
-                pass
+                await bot.send_message(event.sender_id, 'Sessão Finalizada')
         
     async def messages_expired(chat_expired, index):                                    #função que enfilera os pedidos com interação do vendedor onde o comprador não se manifestou a mais de 3 dias
         if index <= len(chat_expired) :
@@ -590,7 +597,7 @@ async def menu_admin(event):                                                    
             elif callback == b'VOLTAR':
                 await menu_admin(event)
             elif callback == b'SAIR':
-                pass
+                await bot.send_message(event.sender_id, 'Sessão Finalizada')
         else:
             callback = await chat_bot(event.sender_id, ('button', 'Não há mais mensagens pendentes\n \nClique em VOLTAR para ir para o menu inicial ou SAIR para encerrar a Sessão', ('VOLTAR', 'SAIR')))
             if not callback:
@@ -598,12 +605,12 @@ async def menu_admin(event):                                                    
             elif callback == b'VOLTAR':
                 await menu_admin(event)
             elif callback == b'SAIR':
-                pass
+                await bot.send_message(event.sender_id, 'Sessão Finalizada')
                                                 #-----------     menu de boas vindas     -----------
                                                 
     query = f"SELECT * FROM usuario WHERE aproved IS NOT TRUE"
     approve_users = con.consult(query)
-    query = f"SELECT id, idrequest FROM chat WHERE answered = FALSE ORDER BY id ASC"
+    query = f"SELECT chat.id, chat.idrequest FROM chat INNER JOIN request ON request.id = chat.idrequest WHERE answered = FALSE AND request.status != 'Cancelado' ORDER BY id ASC"
     no_answ_mess = con.consult(query)
     tda_request = time.strftime("%y%m%d%H%M", time.localtime(time.time() + (3600 * 24 * -2)))
     query = f"SELECT request.id FROM request LEFT JOIN chat ON  request.id = chat.idrequest WHERE chat.id IS NULL AND request.id < {tda_request} AND request.status != 'Cancelado'"
@@ -614,13 +621,13 @@ async def menu_admin(event):                                                    
     wellcome_message = 'Seja bem vindo vendedor\n \n'
     if len(approve_users) > 0:
         wellcome_message += f'\n{len(approve_users)} /CADASTROS aguardando aprovação.\n'
-    elif len(req_no_chat) > 0:
+    if len(req_no_chat) > 0:
         wellcome_message += f'{len(req_no_chat)} /PEDIDOS aguardando contato a mais de 2 dias.\n'
-    elif len(no_answ_mess) > 0:
+    if len(no_answ_mess) > 0:
         wellcome_message += f'{len(no_answ_mess)} /_MENSAGENS te aguardando.\n' 
-    elif len(chat_expired) > 0:
+    if len(chat_expired) > 0:
         wellcome_message += f'{len(chat_expired)} /MENSAGENS suas sem resposta a mais de 3 dias.\n'
-    wellcome_message += '/LISTAR_PRODUTOS (gerenciar produtos).\n/LiSTAR_PEDIDOS não finalizados.\n/SAIR'   
+    wellcome_message += '/LISTAR_PRODUTOS (gerenciar produtos).\n/LISTAR_PEDIDOS não finalizados.\n/SAIR'
     callback = await chat_bot(event.sender_id, ('message', wellcome_message))
     if not callback:
         await bot.send_message(event.sender_id, 'A seleção de tarefas do menu inicial expirou')
@@ -632,16 +639,97 @@ async def menu_admin(event):                                                    
         await no_answered_messages(no_answ_mess, 0)
     elif callback == '/MENSAGENS':
         await messages_expired(chat_expired, 0)
-    elif callback == '/LiSTAR_PEDIDOS':
+    elif callback == '/LISTAR_PEDIDOS':
         await list_request(None)
     elif callback == '/LISTAR_PRODUTOS':
         await manage_products()
-    await bot.send_message(event.sender_id, 'Sessão Finalizada')
-    cancel_op()
-    return
-    
-#===================================================== funções de Cadastro de usuário ==========================================================================
-async def register_user(event):                                                         #função de cadastro de usuários
+    elif callback == '/SAIR':
+        await bot.send_message(event.sender_id, 'Sessão Finalizada')
+    else:
+        await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+        await menu_admin(event)
+        
+#==================================================== funções de Usuário sem cadastro ==========================================================================
+
+async def unregistered_user(event, phone):                                              #função de cadastro de usuários
+    async def get_prod(): #--------------------------------------------------------     #função que recebe o nome
+        async def list_prod(result):                                                    #função que lista os produtos
+            async def select_prod(prod_name): #-----------------------------------------#função que visualisa o anúncio do produto
+                async def view_details(): #---------------------------------------------#função que visualisa os detalhes do produto
+                    desc = await bot.send_message(event.sender_id, f'Descrição completa:\n{product_results[0][2]}')
+                    async with bot.conversation(event.sender_id) as conv:
+                        choose = await conv.send_message(f'Detalhes:\n{product_results[0][3]}', buttons=Button.inline('VOLTAR'))
+                        await conv.wait_event(press_event(event.sender_id), timeout=600)
+                        await bot.delete_messages(event.sender_id, conv._get_message_id(choose))
+                    await bot.delete_messages(event.sender_id, desc)
+                    prod = [product_results[0]]
+                    prod.append(images)
+                    await select_prod(prod)
+                   
+                if type(prod_name) != list:
+                    query = f"SELECT idproducts, name, description, details, price, units FROM products WHERE name LIKE '{prod_name}%'"
+                    product_results = con.consult(query)
+                    query_imgs = f"SELECT img_name FROM prod_img WHERE idproducts = {product_results[0][0]}"
+                    img = con.consult(query_imgs)
+                    images = []
+                    for image in img:
+                        images.append(image[0])
+                    await bot.send_message(event.sender_id, product_results[0][1], file = images)
+                else:
+                    images = prod_name[-1]
+                    prod_name.pop()
+                    product_results = prod_name
+                desc = product_results[0][2].rsplit('.')        
+                if len(desc) > 1:
+                    descript = f'Valor Unitário: R${to_real(product_results[0][4])}\n \n{desc[0]}.\n{desc[1].strip()}...\n'
+                else:
+                    descript = f'Valor Unitário: R${to_real(product_results[0][4])}\n \n{desc[0]}...\n'
+                descript += '\nClique em DETALHES para mais informações\n'
+                descript += '\nClique em VOLTAR para voltar para consultar outros produtos ou SAIR para encerrar o atendimento'
+                descript += '\nClique em Cadastrar para se cadastrar'
+                description = ('button', descript, ('DETALHES', 'VOLTAR', 'SAIR', 'CADASTRAR'))
+                callback = await chat_bot(event.sender_id, description)
+                if not callback:
+                    await bot.send_message(event.sender_id, f'Você estava visualizando o produto {prod_name}')
+                elif callback == b'DETALHES':
+                    await view_details()
+                elif callback == b'VOLTAR':
+                    await get_prod()
+                elif callback == b'SAIR':
+                    await bot.send_message(event.sender_id, 'Atendimento Encerrado, até logo!')
+                elif callback == b'CADASTRAR':
+                    await start_register()  
+            i=0
+            products_list = 'Clique no marcador correspondente ao nome do produto para ver o anúncio:\n'
+            for products in result:
+                i += 1
+                prod = products[0].rsplit(',')
+                products_list += f'/PRODUTO_{i}: {prod[0]}\n'
+            callback = await chat_bot(event.sender_id, ('message', products_list))
+            if not callback:
+                await bot.send_message(event.sender_id, 'Você não abriu o produto correspondente para ser visto.')
+            else:
+                if callback[0:9] != '/PRODUTO_':
+                    await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+                    list_prod(result)
+                else:
+                    listed = int(callback.strip("/PRODUTO_"))-1
+                    await select_prod(result[listed][0])
+                
+        wellcome = ('message', 'Digite o que está procurando')
+        callback = await chat_bot(event.sender_id, wellcome)
+        if not callback:
+            await bot.send_message(event.sender_id, 'Você não digitou um produto a tempo')
+        else:
+            query = f"SELECT name FROM products WHERE LOWER(name) LIKE LOWER('%{callback}%') AND units > 0 ORDER BY name ASC"
+            result = con.consult(query)
+            if not result:
+                await bot.send_message(event.sender_id, f'Não encontrei produtos com "{callback}" no nome')
+                await get_prod()
+            else:
+                await bot.send_message(event.sender_id, f'Eu encontrei {len(result)}produto(s) correspondente(s) a "{callback}":')
+                await list_prod(result)
+            
     async def start_register():                                                         #função inicial de cadastro
         answers = []
         register = (('message','Digite seu nome completo ou razão social'),
@@ -650,87 +738,100 @@ async def register_user(event):                                                 
         for quest in register:
             callback = await chat_bot(event.sender_id, quest)
             if not callback:
-                cancel_op()
-                return  
+                await bot.send_message(event.sender_id, 'Você não terminou seu cadastro, tente novamente mais tarde.') 
             else:
                 answers.append(callback)
         aprove_data = (('button',f'Verifique se os dados estão corretos:\nNome completo ou razão social: {answers[0]}\n'+
                     f'CPF ou CNPJ: {answers[1]}\nRG ou inscrição estadual: {answers[2]}', ('PROSSEGUIR', 'EDITAR DADOS', 'CANCELAR CADASTRO')))
         callback = await chat_bot(event.sender_id, aprove_data)
         if not callback:
-            cancel_op() 
+            await bot.send_message(event.sender_id, 'Você não confirmou se os dados estavão corretos')
         elif callback == b'PROSSEGUIR':
-            query = f"INSERT INTO usuario (iduser, phone, name_rs, cpf_cnpj, rg_insc) VALUES ({event.sender_id}, {phone_user}, '{answers[0]}', '{answers[1]}', '{answers[2]}')"
+            query = f"INSERT INTO usuario (iduser, phone, name_rs, cpf_cnpj, rg_insc) VALUES ({event.sender_id}, {phone}, '{answers[0]}', '{answers[1]}', '{answers[2]}')"
             con.manipulate(query)
             await bot.send_message(event.sender_id, 'Você receberá uma mensagem assim que seu cadastro for aprovado, muito obrigado e até logo!')
-            cancel_op()
         elif callback == b'CANCELAR CADASTRO':
             await bot.send_message(event.sender_id, 'Cadastro cancelado, quando quiser se cadastrar, basta enviar um oi no grupo de vendas, obrigado e até a próxima!')
-            cancel_op()
         elif callback == b'EDITAR DADOS':
             await start_register()
-
-    accept_register = ('button','Eu identifiquei que você não está cadastrado e para continuar, terá que nos fornecer dados cadastrais e aguardar aprovação. Você concorda com isso?', ('SIM', 'NÃO'))
+        
+    accept_register = ('button','Eu identifiquei que você não está cadastrado, para efetuar compras deverá estar cadastrado, mas você pode visualizar os produtos e se cadastrar depois.', ('CADASTRAR', 'VER PRODUTOS', 'SAIR'))
     callback = await chat_bot(event.sender_id, accept_register)                         #aceite dos termos que o usuário terá que enviar os dados cadastrais para prosseguir
     if not callback:
-        cancel_op()
-        return 
-    if callback == b'SIM':
+        await bot.send_message(event.sender_id, 'Você não aceitou a confirmação de envio de dados cadastrais')
+    if callback == b'CADASTRAR':
         await start_register()
+    elif callback == b'VER PRODUTOS':
+        await get_prod()
     else:
-        cancel_op()
+        await bot.send_message(event.sender_id, 'Esperamos que retorne e faça o cadastro posteriormente')
     
  #=================================================================== Menu de Usuário Aprovado ==================================================================================
-    
+
+#===================================================== funções de usuário cadastrado ===========================================================================
+
 async def user_menu(event):                                                             #função inicial ou menu de usuário
     
     async def create_request(id_product, name_product, units, price_product):           #função de criação do pedido do usuário
-        
         async def list_request():                                                       #função que lista os produtos, quantidade e valores no pedido
+            async def send_request(request):                                                 #função de confirmação de pedido, onde o registro vai para o banco de dados
+                new_request_id = time.strftime("%y%m%d%H%M", time.localtime())
+                insert_request = f"INSERT INTO request (id, iduser, status) VALUES ({new_request_id}, {event.sender_id}, 'Aguardando endereço e forma de pagamento')"
+                con.manipulate(insert_request)
+                for product in request:
+                    insert_prod_request = f"INSERT INTO prod_request (idrequest, idproducts, price_unit, prod_units) VALUES ({new_request_id}, {product[0]}, {product[3]}, {product[2]})"
+                    con.manipulate(insert_prod_request)
+                    reserve_product_unit = f"UPDATE products SET units = (SELECT units FROM products WHERE idproducts = {product[0]}) - {product[2]} WHERE idproducts = {product[0]}"
+                    con.manipulate(reserve_product_unit)
+                payment_message = f'O número do seu pedido é {new_request_id}\n \nPara acessá-lo digite /pedidos no grupo de vendas\n \n'
+                payment_message += 'Acesse agora e acompanhe o status do pedido, envie os dados do seu endereço para cálculo de frete e se prefere '
+                payment_message += 'pagar por transferência bancária, pix, código de barras ou cartões através do link de pagamento via PagSeguro ou Mercado Pago'
+                await bot.send_message(event.sender_id, payment_message)
             total = 0
             if len(request) > 0:
                 i=0
-                products_list = 'Clique em /FINALIZAR para encerrar e pagar a compra ou\nClique em /CONTINUAR_COMPRANDO para voltar ou\nClique em /CANCELAR para cancelar o pedido ou\nClique no marcador correspondente para remover algum item do carrinho:\n \n'
+                products_list = 'Clique em /FINALIZAR para encerrar e pagar a compra ou\nClique em /CONTINUAR_COMPRANDO para voltar ou\nClique em /CANCELAR para cancelar o pedido ou\nClique no marcador correspondente para remover algum item do pedido:\n \n'
                 for product in request:
                     i += 1
                     total += product[3]
                     products_list += f'/REMOVER_{i}: {product[2]} X {product[1]}\n'
                 if i == 0:
-                    await user_menu(event)
+                    await name_prod()
                 else:    
                     callback = await chat_bot(event.sender_id, ('message', f'{products_list}\n \n Valor total do pedido: R${to_real(total)}'))
                     if not callback:
-                        request.clear()
-                        cancel_op()
-                        return
+                        await bot.send_message(event.sender_id, 'Você não concluiu a compra do produto')
                     elif callback == '/FINALIZAR':
-                        await send_request(event)
+                        await send_request(request)
                     elif callback == '/CONTINUAR_COMPRANDO':
-                        await user_menu(event)
+                        await name_prod()
                     elif callback == '/CANCELAR':
                         await bot.send_message(event.sender_id, 'O pedido foi cancelado!')
-                        request.clear()
-                        cancel_op()
-                        return
+                        await user_menu(event)
                     else:
-                        listed = int(callback.strip("/REMOVER_"))-1
-                        new_request = []
-                        j=0
-                        for item in request:
-                            if j != listed:    
-                                new_request.append(item)
-                            j+=1    
-                        request.clear()
-                        if len(new_request) > 0:
-                            for item in new_request:
-                                request.append(item)
-                        await list_request()
+                        if callback[0:8] != '/REMOVER':
+                            await bot.send_message(event.sender_id, 'Você digitou acidentalmente?')
+                            await list_request()
+                        else:
+                            listed = int(callback.strip("/REMOVER_"))-1
+                            new_request = []
+                            j=0
+                            for item in request:
+                                if j != listed:    
+                                    new_request.append(item)
+                                j+=1    
+                            request.clear()
+                            if len(new_request) > 0:
+                                for item in new_request:
+                                    request.append(item)
+                            await list_request()
             else:
                 await bot.send_message(event.sender_id, 'O pedido está vazio!')
-                await user_menu(event)            
-        if not id_product is None:
+                await name_prod()            
+        if id_product:
             request.append([id_product, name_product, units, price_product])
-        await list_request()           
+        await list_request()
+                   
     async def list_products(result): #--------------------------------------------------#Função Listar Produtos
         async def view_product(prod_name): #--------------------------------------------#Função Visualizar Produto
             async def add_product(): #--------------------------------------------------#Função de adicionar produto ao pedido
@@ -750,18 +851,15 @@ async def user_menu(event):                                                     
                 callback = await chat_bot(event.sender_id, prod_qt)
                 units = await value_stock(callback)
                 if not units:
-                    cancel_op()
-                    return
+                    await bot.send_message(event.sender_id, 'Você não digitou uma quatidade válida')
                 confirmate = ('button', f'{units} X {product_results[0][1]}\n \nValor total: R${to_real(product_results[0][4] * units)}', ('ADICIONAR AO PEDIDO', 'DESISTIR'))
                 callback = await chat_bot(event.sender_id, confirmate)                
                 if not callback:
-                    cancel_op()
-                    return
+                    await bot.send_message(event.sender_id, 'Você não adicionou ou desistiu de adicionar o produto a um pedido')
                 elif callback == b'DESISTIR':
                     await view_product(prod_name)
                 elif callback == b'ADICIONAR AO PEDIDO':
                     await create_request(product_results[0][0], product_results[0][1], units, product_results[0][4] * units)
-
 
             async def view_details(): #--------------------------------------------------Função Ver Detalhes
                 desc = await bot.send_message(event.sender_id, f'Descrição completa:\n{product_results[0][2]}')
@@ -773,6 +871,7 @@ async def user_menu(event):                                                     
                 prod = [product_results[0]]
                 prod.append(images)
                 await view_product(prod)
+                
             if type(prod_name) != list:
                 query = f"SELECT idproducts, name, description, details, price, units FROM products WHERE name LIKE '{prod_name}%'"
                 product_results = con.consult(query)
@@ -796,18 +895,15 @@ async def user_menu(event):                                                     
             description = ('button', descript, ('DETALHES', 'COMPRAR', 'VOLTAR', 'SAIR'))
             callback = await chat_bot(event.sender_id, description)
             if not callback:
-                cancel_op()
-                return
+                await bot.send_message(event.sender_id, 'Você estava no meio do pedido, ele foi cancelado')
             elif callback == b'DETALHES':
                 await view_details()
             elif callback == b'COMPRAR':
                 await add_product()
             elif callback == b'VOLTAR':
-                await user_menu(event)
+                await name_prod()
             elif callback == b'SAIR':
                 await bot.send_message(event.sender_id, 'Atendimento Encerrado, até logo!')
-                cancel_op()
-                return
    
         i=0
         products_list = 'Clique no marcador correspondente ao nome do produto para ver o anúncio:\n'
@@ -816,68 +912,47 @@ async def user_menu(event):                                                     
             prod = products[0].rsplit(',')
             products_list += f'/PRODUTO_{i}: {prod[0]}\n'
         if i == 0:
-            await user_menu(event)
+            await name_prod()
         else:    
             callback = await chat_bot(event.sender_id, ('message', products_list))
             if not callback:
-                cancel_op()
-                return
+                await bot.send_message(event.sender_id, 'Você não selecionou o produto.')
             else:
                 listed = int(callback.strip("/PRODUTO_"))-1
-                await view_product(result[listed][0])
-                
-    wellcome = ('message', 'Você pode digitar o que está procurando ou\nClicar em /LISTA para ver uma lista de nossos produtos ou\nClicar em /VER_PEDIDO para ver o pedido caso tenha ítens comprados')
-    callback = await chat_bot(event.sender_id, wellcome)
-    if not callback:
-        cancel_op()
-    elif callback == '/LISTA':
-        query = "SELECT name FROM products WHERE units > 0"
-        result = con.consult(query)
-        if not result:
-            callback = await chat_bot(event.sender_id, ('button', 'No momento não há produtos disponíveis a venda, volte mais tarde', ('VOLTAR',)))
-            if not callback:
-                cancel_op()
+                await view_product(result[listed][0]) 
+    
+    async def name_prod():
+        wellcome = ('message', 'Você pode digitar o que está procurando ou\nClicar em /VER_PEDIDO para ver o pedido caso tenha ítens comprados')
+        callback = await chat_bot(event.sender_id, wellcome)
+        if not callback:
+            await bot.send_message(event.sender_id, 'Você não digitou o que está procurando')
+        elif callback == '/VER_PEDIDO':
+            if len(request) > 0:
+                await create_request(None, None, None, None)
             else:
-                await user_menu(event)
+                await bot.send_message(event.sender_id, 'Lista de pedidos vazia')
+                await name_prod()
         else:
-            await list_products(result)
-    elif callback == '/VER_PEDIDO':
-        if len(request) > 0:
-            await create_request(None, None, None, None)
-        else:
-            await bot.send_message(event.sender_id, 'Lista de pedidos vazia')
-            await user_menu(event)
-    else:
-        query = f"SELECT name FROM products WHERE LOWER(name) LIKE LOWER('%{callback}%') AND units > 0 ORDER BY name ASC"
-        result = con.consult(query)
-        if not result:
-            await bot.send_message(event.sender_id, f'Não encontrei produtos com "{callback}" no nome')
-            await user_menu(event)
-        else:
-            await bot.send_message(event.sender_id, f'Eu encontrei {len(result[0])}produto(s) correspondente(s) a "{callback}":')
-            await list_products(result)
+            query = f"SELECT name FROM products WHERE LOWER(name) LIKE LOWER('%{callback}%') AND units > 0 ORDER BY name ASC"
+            result = con.consult(query)
+            if not result:
+                await bot.send_message(event.sender_id, f'Não encontrei produtos com "{callback}" no nome')
+                await name_prod()
+            else:
+                await bot.send_message(event.sender_id, f'Eu encontrei {len(result[0])}produto(s) correspondente(s) a "{callback}":')
+                await list_products(result)
 
-#========================================================  Controle de pedidos =================================================================================
-async def send_request(event):                                                          #função de confirmação de pedido, onde o registro vai para o banco de dados
-    new_request_id = time.strftime("%y%m%d%H%M", time.localtime())
-    insert_request = f"INSERT INTO request (id, iduser, status) VALUES ({new_request_id}, {event.sender_id}, 'Aguardando endereço e forma de pagamento')"
-    con.manipulate(insert_request)
-    for product in request:
-        insert_prod_request = f"INSERT INTO prod_request (idrequest, idproducts, price_unit, prod_units) VALUES ({new_request_id}, {product[0]}, {product[3]}, {product[2]})"
-        con.manipulate(insert_prod_request)
-        reserve_product_unit = f"UPDATE products SET units = (SELECT units FROM products WHERE idproducts = {product[0]}) - {product[2]} WHERE idproducts = {product[0]}"
-        con.manipulate(reserve_product_unit)
-    payment_message = f'O número do seu pedido é {new_request_id}\n \nPara acessá-lo digite /pedidos no grupo de vendas\n \n'
-    payment_message += 'Acesse agora e acompanhe o status do pedido, envie os dados do seu endereço para cálculo de frete e se prefere '
-    payment_message += 'pagar por transferência bancária, pix, código de barras ou cartões através do link de pagamento via PagSeguro ou Mercado Pago'
-    await bot.send_message(event.sender_id, payment_message)
+    request = []
+    await name_prod()
+
+#---------------------------------------------------------  Controle de pedidos  --------------------------------------------------------------------------------
 
 async def view_requests(event):                                                         #função de visualização de pedidos anteriores
     async def view_prod_req():                                                          #função de visualização de produtos, quantidade e valores dos pedidos
         async def list_msg():                                                           #função de listagem de mensagens para os pedidos
             async def rec_message(message):                                             #função de gravação de novas mensagens
                 new_mess_id = time.strftime("%y%m%d%H%M%S", time.localtime())
-                insert_message = f"INSERT INTO chat (id, idrequest, who_sent, message, answered) VALUES ({new_mess_id}, {the_request}, 'você', '{message}', FALSE)"
+                insert_message = f"INSERT INTO chat (id, idrequest, who_sent, message, answered) VALUES ({new_mess_id}, {the_request}, 'comprador', '{message}', FALSE)"
                 con.manipulate(insert_message)
                 await bot.send_message(event.sender_id, 'O vendedor foi notificado, você receberá uma resposta em breve!')
                 await list_msg()
@@ -891,13 +966,16 @@ async def view_requests(event):                                                 
                 temp_message = 'Para baixar os arquivos, clique em BAIXAR\n \n'
                 temp_message += 'Mensagens anteriores:\n \n'
                 for mess in messages:
+                    who_sent = 'por você'
+                    if mess[1] != 'comprador':
+                        who_sent = 'pelo vendedor'
                     if mess[2][0:11] == '\workspaces':
                         img.append(mess[2])
                         i += 1
                         file_name = mess[2].rsplit('\\')
-                        temp_message += f'Enviado por: {mess[1]} em {to_date(mess[0])}:\n/BAIXAR_{i} {file_name[-1]}\n \n'
+                        temp_message += f'Arquivo enviado {who_sent} em: {to_date(mess[0])}:\n/BAIXAR_{i} {file_name[-1]}\n \n'
                     else:
-                        temp_message += f'Mensagem enviada por {mess[1]} em {to_date(mess[0])}\n{mess[2]}\n \n'    
+                        temp_message += f'Mensagem enviada {who_sent} em: {to_date(mess[0])}\n{mess[2]}\n \n'    
             temp_message += 'Lembrete: Já deixou os dados de entrega e a preferência do método de pagamento?\n'
             temp_message += 'Agora você já pode digitar a mensagem!\n'
             temp_message += 'Clique em /VOLTAR para retornar aos pedidos\n'
@@ -905,7 +983,7 @@ async def view_requests(event):                                                 
             temp_message += 'Clique em /ENVIAR para enviar um arquivo / imagem\n'
             callback = await chat_bot(event.sender_id, ('message', temp_message))
             if not callback:
-                cancel_op()
+                await bot.send_message(event.sender_id, f'Você estava vendo as mensagens no pedido {the_request}')
             elif callback[0:7] == '/BAIXAR':
                 j = int(callback.strip("/BAIXAR_"))-1
                 await bot.send_message(event.sender_id, 'Baixando arquivo, se for imagem, ele irá abrir como foto', file = img[j])
@@ -914,17 +992,16 @@ async def view_requests(event):                                                 
                 await view_requests(event)
             elif callback == '/SAIR':
                 await bot.send_message(event.sender_id, 'Obrigado pela preferência e até breve!!!')
-                cancel_op()
             elif callback == '/ENVIAR':
                 send_img = ['img', 'escolha um arquivo por mensagem (imagens deverão ser enviadas como arquivo)', the_request]
                 callback = await chat_bot(event.sender_id, send_img)
                 if not callback:
-                    cancel_op()
+                    await bot.send_message(event.sender_id, f'Você estava enviando um arquivo para o pedido {the_request}')
                 else:
                     await rec_message(callback)
             else:                   
                 await rec_message(callback)
-        
+
         total = 0
         det_request = f'Pedido {the_request}\nStatus: {req[1]}\n\n'
         query = f"SELECT products.idproducts, name, prod_units, price_unit, units FROM prod_request INNER JOIN products ON prod_request.idproducts = products.idproducts WHERE idrequest = {the_request} ORDER BY id ASC"
@@ -934,15 +1011,13 @@ async def view_requests(event):                                                 
             det_request += f'{prod[2]}X {prod[1]}\n'
         det_request += f'\nValor total:   R${to_real(total)}\n \nClique em SAIR para finalizar o atendimento\nClique em VOLTAR para escolher outro pedido\n'
         det_request += 'Clique em MENSAGENS para ver o histórico e enviar novas mensagens'
-        
         callback = await chat_bot(event.sender_id, ('button', det_request,('SAIR', 'VOLTAR', 'MENSAGENS')))
         if not callback:
-            cancel_op()
+            await bot.send_message(event.sender_id, f'Você estava vendo o pedido {the_request}')
         elif callback == b'VOLTAR':
             await view_requests(event)
         elif callback == b'SAIR':
             await bot.send_message(event.sender_id, 'Obrigado pela preferência e até breve!!!')
-            cancel_op()
         elif callback == b'MENSAGENS':
             await list_msg()
 
@@ -950,18 +1025,17 @@ async def view_requests(event):                                                 
     requests = con.consult(query)
     if len(requests) < 1:
         await bot.send_message(event.sender_id, 'Desculpe, eu não encontrei pedidos no seu histórico!')
-        cancel_op()
     else:
         list_requests = 'Clique no pedido para ver detalhes e mandar mensagem para o vendedor:\n \n'
         for req in requests:
             list_requests += f'/PEDIDO_{req[0]}\nStatus: {req[1]}\n'
         callback = await chat_bot(event.sender_id, ('message', list_requests))
         if not callback:
-            cancel_op()
+            await bot.send_message(event.sender_id, f'Você estava vendo o seu histórico de pedidos')
         else:
             the_request = callback.strip("/PEDIDO_")
             await view_prod_req()
-   
-    
+
+
 bot.start(bot_token)
 bot.run_until_disconnected()
